@@ -158,13 +158,4 @@ def log_run():
 csv = df.to_csv(index=False).encode("utf-8")
 st.download_button("Download CSV", csv, "ianalumab_model.csv", "text/csv")
 
-# Save log button
-if st.button("Save this run to Google Sheet"):
-    if consent:
-        try:
-            log_run()
-            st.success("Saved to Google Sheet ✅")
-        except Exception as e:
-            st.error(f"Failed to save: {e}")
-    else:
-        st.warning("Please check consent box to save this run.")
+
