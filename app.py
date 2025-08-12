@@ -1,47 +1,41 @@
+from google.oauth2.service_account import Credentials
+import gspread
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import streamlit as st
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-from datetime import datetime
-from zoneinfo import ZoneInfo
-
-# Optional: Google Sheets logging
-try:
-    from google.oauth2.service_account import Credentials
-    import gspread
-    SHEETS_AVAILABLE = True
-except Exception:
-    SHEETS_AVAILABLE = False
 
 st.set_page_config(page_title="Ianalumab Revenue Model", layout="centered")
 
-# --- UTM tracking (robust, compatible with different Streamlit versions) ---
-def _get_query_params():
-    try:
-        p = st.query_params  # new versions: Mapping[str, str]
-        return {k: p.get(k, "") for k in ("utm_source","utm_medium","utm_campaign","app")}
-    except Exception:
-        p = st.experimental_get_query_params()  # old: Dict[str, List[str]]
-        def getv(k): 
-            v = p.get(k, [""])
-            return v[0] if isinstance(v, list) and v else (v or "")
-        return {k: getv(k) for k in ("utm_source","utm_medium","utm_campaign","app")}
+# --- UTM tracking ---
+try:
+    # 新版 Streamlit
+    params = st.query_params
+except Exception:
+    # 舊版相容
+    params = st.experimental_get_query_params()
 
-qp = _get_query_params()
-utm_new = {k: qp.get(k, "") for k in ("utm_source", "utm_medium", "utm_campaign")}
-if any(utm_new.values()):
-    st.session_state["utm"] = utm_new
-else:
-    st.session_state.setdefault("utm", utm_new)
-utm = st.session_state["utm"]
+utm = {
+    "utm_source": params.get("utm_source", [""])[0] if isinstance(params, dict) else params.get("utm_source", ""),
+    "utm_medium": params.get("utm_medium", [""])[0] if isinstance(params, dict) else params.get("utm_medium", ""),
+    "utm_campaign": params.get("utm_campaign", [""])[0] if isinstance(params, dict) else params.get("utm_campaign", ""),
+}
 
+# 存到 session_state
+st.session_state.setdefault("utm", utm)
+
+# 在畫面顯示來源（可選）
 if any(utm.values()):
-    st.caption(f"Traffic Source: {utm.get('utm_source','')} / {utm.get('utm_medium','')} / {utm.get('utm_campaign','')}")
+    st.caption(f"Traffic Source: {utm['utm_source']} / {utm['utm_medium']} / {utm['utm_campaign']}")
+
+
 
 st.title("Ianalumab Revenue & Investment Model")
 
-# Sidebar - parameters
+# Sidebar
 st.sidebar.header("Parameters")
 launch_year = st.sidebar.number_input("Launch Year", 2025, 2035, 2027)
 ramp_years  = st.sidebar.slider("Ramp Years to Peak", 3, 8, 5)
@@ -55,12 +49,6 @@ sga_pct  = st.sidebar.slider("SG&A % of Gross Profit", 0.10, 0.50, 0.25, step=0.
 prelaunch_years = st.sidebar.slider("Pre-launch Investment Years", 0, 3, 2)
 postlaunch_years = st.sidebar.slider("Post-launch Investment Years", 0, 3, 1)
 total_invest_m = st.sidebar.number_input("Total Investment (USD $M)", 100, 2000, 670, step=10)
-
-# Optional: who is using (for identification)
-st.sidebar.markdown("---")
-name = st.sidebar.text_input("Your name (optional)")
-linkedin_url = st.sidebar.text_input("LinkedIn URL (optional)")
-consent = st.sidebar.checkbox("I consent to save this run to Google Sheet (optional)")
 
 # Ramp function
 def ramp_factors(n, kind="linear"):
@@ -120,18 +108,10 @@ st.markdown("---")
 st.write(f"**Approx. Break-even Year:** {break_even_year if break_even_year else 'Not reached'}")
 st.caption("Change PoS, Ramp Shape, or Investment to see how break-even shifts.")
 
-# Ensure UTM columns exist and write to df
-for k in ("utm_source", "utm_medium", "utm_campaign"):
-    df[k] = utm.get(k, "")
-
-# Download CSV
-csv = df.to_csv(index=False).encode("utf-8")
-st.download_button("Download CSV", csv, "ianalumab_model.csv", "text/csv")
-
-# --- Google Sheets logging (optional) ---
-def sheets_enabled():
-    return SHEETS_AVAILABLE and "gcp_service_account" in st.secrets and "sheets" in st.secrets
-
+# 把 UTM 寫到每列
+for k, v in st.session_state["utm"].items():
+    df[k] = v
+# --- Google Sheets logger ---
 @st.cache_resource(show_spinner=False)
 def _open_worksheet():
     creds = Credentials.from_service_account_info(
@@ -143,14 +123,14 @@ def _open_worksheet():
     )
     gc = gspread.authorize(creds)
     sh = gc.open_by_key(st.secrets["sheets"]["sheet_key"])
-    # worksheet name: from secrets or query param ?app=, fallback to 'runs'
-    ws_name = st.secrets["sheets"].get("worksheet", qp.get("app") or "runs")
+    ws_name = st.secrets["sheets"].get("worksheet", "runs")
     try:
         ws = sh.worksheet(ws_name)
     except gspread.WorksheetNotFound:
-        ws = sh.add_worksheet(title=ws_name, rows=2000, cols=40)
+        ws = sh.add_worksheet(title=ws_name, rows=1000, cols=30)
+        # 可選：先寫表頭
         ws.append_row([
-            "timestamp_taipei","app_id","name","linkedin_url",
+            "timestamp_taipei","name","linkedin_url",
             "utm_source","utm_medium","utm_campaign",
             "launch_year","ramp_years","ramp_shape",
             "peak_sales_bil","pos","cogs_pct","sga_pct",
@@ -163,9 +143,10 @@ def log_run():
     ws = _open_worksheet()
     tz = ZoneInfo("Asia/Taipei")
     ts = datetime.now(tz).strftime("%Y-%m-%d %H:%M:%S")
-    app_id = qp.get("app") or st.secrets["sheets"].get("worksheet","runs")
+    utm = st.session_state.get("utm", {"utm_source":"", "utm_medium":"", "utm_campaign":""})
     ws.append_row([
-        ts, app_id, name, linkedin_url,
+        ts,
+        name, linkedin_url,
         utm.get("utm_source",""), utm.get("utm_medium",""), utm.get("utm_campaign",""),
         launch_year, ramp_years, ramp_shape,
         float(peak_sales_bil), float(pos), float(cogs_pct), float(sga_pct),
@@ -173,16 +154,17 @@ def log_run():
         break_even_year or ""
     ], value_input_option="USER_ENTERED")
 
-# UI for saving to Google Sheet
-if sheets_enabled():
-    if st.button("Save this run to Google Sheet"):
-        if consent:
-            try:
-                log_run()
-                st.success("Saved to Google Sheet ✅")
-            except Exception as e:
-                st.error(f"Failed to save: {e}")
-        else:
-            st.warning("Please check consent box to save this run.")
-else:
-    st.caption("Tip: Add Google Sheets credentials in Secrets to enable logging (optional).")
+# Download
+csv = df.to_csv(index=False).encode("utf-8")
+st.download_button("Download CSV", csv, "ianalumab_model.csv", "text/csv")
+
+# Save log button
+if st.button("Save this run to Google Sheet"):
+    if consent:
+        try:
+            log_run()
+            st.success("Saved to Google Sheet ✅")
+        except Exception as e:
+            st.error(f"Failed to save: {e}")
+    else:
+        st.warning("Please check consent box to save this run.")
