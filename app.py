@@ -5,6 +5,30 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 st.set_page_config(page_title="Ianalumab Revenue Model", layout="centered")
+
+# --- UTM tracking ---
+try:
+    # 新版 Streamlit
+    params = st.query_params
+except Exception:
+    # 舊版相容
+    params = st.experimental_get_query_params()
+
+utm = {
+    "utm_source": params.get("utm_source", [""])[0] if isinstance(params, dict) else params.get("utm_source", ""),
+    "utm_medium": params.get("utm_medium", [""])[0] if isinstance(params, dict) else params.get("utm_medium", ""),
+    "utm_campaign": params.get("utm_campaign", [""])[0] if isinstance(params, dict) else params.get("utm_campaign", ""),
+}
+
+# 存到 session_state
+st.session_state.setdefault("utm", utm)
+
+# 在畫面顯示來源（可選）
+if any(utm.values()):
+    st.caption(f"Traffic Source: {utm['utm_source']} / {utm['utm_medium']} / {utm['utm_campaign']}")
+
+
+
 st.title("Ianalumab Revenue & Investment Model")
 
 # Sidebar
@@ -79,6 +103,10 @@ st.pyplot(fig)
 st.markdown("---")
 st.write(f"**Approx. Break-even Year:** {break_even_year if break_even_year else 'Not reached'}")
 st.caption("Change PoS, Ramp Shape, or Investment to see how break-even shifts.")
+
+# 把 UTM 寫到每列
+for k, v in st.session_state["utm"].items():
+    df[k] = v
 
 # Download
 csv = df.to_csv(index=False).encode("utf-8")
